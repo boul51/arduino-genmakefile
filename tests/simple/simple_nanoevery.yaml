@@ -1,0 +1,4 @@
+configs:
+ - conf/project.yaml
+ - conf/board/nanoevery.yaml
+ - conf/arduino/nanoevery.yaml

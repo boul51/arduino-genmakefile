@@ -1,0 +1,3 @@
+libs:
+ - subsub22
+fqbn: arduino:sam:arduino_due_x

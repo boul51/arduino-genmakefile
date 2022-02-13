@@ -1,0 +1,3 @@
+fqbn: "arduino:sam:arduino_due_x"
+cflags:
+ - -DSERIAL_IFACE=SerialUSB

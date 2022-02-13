@@ -1,0 +1,3 @@
+fqbn: "arduino:sam:arduino_due_x_dbg"
+cflags:
+ - -DSERIAL_IFACE=Serial

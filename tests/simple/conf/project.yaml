@@ -1,0 +1,8 @@
+libs:
+ - "../lib/lib1"
+ - "../lib/lib2"
+cflags:
+ - -Wall
+ - -I"$(CURDIR)"
+ - -DNO_PRAGMA_MARK
+ - '"-DMY_STRING="SOME STRING""'

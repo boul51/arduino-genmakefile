@@ -1,0 +1,4 @@
+configs:
+ - conf/project.yaml
+ - conf/board/due_prog.yaml
+ - conf/arduino/due.yaml

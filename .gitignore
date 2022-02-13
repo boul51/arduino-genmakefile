@@ -1,0 +1,6 @@
+.idea
+tests/simple/bin*
+tests/simple/Makefile*
+tests/simple/*.pro
+tests/simple/simple_*
+tests/subconfigs/Makefile*
