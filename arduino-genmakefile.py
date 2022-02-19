@@ -213,6 +213,8 @@ class Path:
 
 
 class Config:
+    extra_config_stack = []
+
     def __init__(self, paths):
         self.main_paths = paths.copy()
         self.paths = []
@@ -304,6 +306,14 @@ class Config:
 
     @staticmethod
     def get_extra_configs(path):
+        if path in Config.extra_config_stack:
+            print("Circular configuration inclusion detected while parsing " + str(path))
+            print("Inclusion stack: ")
+            for stack_item in Config.extra_config_stack:
+                print(" - " + str(stack_item))
+            Error.exit_on_error("Aborting due to circular configuration inclusion")
+
+        Config.extra_config_stack.append(str(path))
         ret = []
         file = open(str(path), "r")
         data = yaml.safe_load(file)
@@ -312,6 +322,8 @@ class Config:
             config_path = Path(config, str(path))
             ret.append(config_path)
             ret += Config.get_extra_configs(config_path)
+
+        Config.extra_config_stack.pop()
         return ret
 
 
