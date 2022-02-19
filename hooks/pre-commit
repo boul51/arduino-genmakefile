@@ -1,0 +1,4 @@
+#!/bin/sh
+
+echo "Running pylint..."
+pylint --max-line-length 140 arduino-genmakefile.py
