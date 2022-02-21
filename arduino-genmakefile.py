@@ -11,6 +11,7 @@ import re
 import copy
 import pathlib
 import time
+import enum
 import yaml
 
 
@@ -45,11 +46,11 @@ class Paths:
 
     @staticmethod
     def makefile_default_template_path():
-        return Path(os.path.join(str(Paths.templates_dir()), "Makefile"))
+        return Path(os.path.join(Paths.templates_dir().path, "Makefile"))
 
     @staticmethod
     def qmake_default_template_path():
-        return Path(os.path.join(str(Paths.templates_dir()), "qmake.pro"))
+        return Path(os.path.join(Paths.templates_dir().path, "qmake.pro"))
 
 
 class Error:
@@ -64,102 +65,95 @@ class Error:
 
 
 class Path:
-    def __init__(self, path, reference=None):
-        self._isuser = path.startswith("~/")
+    # pylint: disable=too-many-public-methods
+    class Type(enum.Enum):
+        Relative = 0
+        Absolute = 1
+        User = 2
 
-        if self._isuser:
-            path = path.replace("~/", "", 1)
-            reference = os.path.expanduser("~/")
+    @staticmethod
+    def check_basedir_valid(basedir):
+        basedir = Path.to_string(basedir)
+        if basedir is None:
+            raise ValueError("Base dir is None")
+        if not os.path.isabs(basedir):
+            raise ValueError("Base dir " + basedir + " is not valid (should be absolute)")
+        if os.path.exists(basedir) and not os.path.isdir(basedir):
+            raise ValueError("Base dir " + basedir + " is not valid (exists and is not a directory")
+        return True
 
-        isabs = os.path.isabs(path)
+    @staticmethod
+    def to_string(path):
+        if isinstance(path, Path):
+            return path.path
+        return path
 
-        if not isabs and not reference:
-            raise Exception("path should be absolute, or reference should be specified")
+    def __init__(self, path, basedir=None):
+        path = Path.to_string(path)
+        basedir = Path.to_string(basedir)
 
-        if reference and not os.path.isabs(reference):
-            raise Exception("reference should be absolute")
-
-        if isabs:
-            self.reference = None
-            self.rel_path = None
-            self.abs_path = path
+        if path.startswith("~/"):
+            # path is something like ~/some/path
+            self._type = Path.Type.User
+            self.basedir = os.path.expanduser("~/")
+            self.path = os.path.realpath(os.path.expanduser(path))
+        elif os.path.isabs(path):
+            # path is something like /some/path
+            self._type = Path.Type.Absolute
+            self.path = os.path.realpath(path)
         else:
-            self.reference = reference if os.path.isdir(reference) else os.path.dirname(reference)
-            self.rel_path = path
-            self.abs_path = None
-
-    def __str__(self):
-        if self.isabs():
-            return self.abs_path
-        return os.path.realpath(os.path.join(self.reference, self.rel_path))
+            # path is something like some/path, basedir something like /some/directory
+            Path.check_basedir_valid(basedir)
+            self._type = Path.Type.Relative
+            self.basedir = basedir
+            self.path = os.path.realpath(os.path.join(basedir, path))
 
     def __eq__(self, other):
-        # print("Entering eq, comparing: " + str(self) + " and " + str(other))
-        return str(self) == str(other)
+        return self.path == other.path
 
-    def to_relative(self, reference):
-        if isinstance(reference, Path):
-            reference = str(reference)
+    def to_relative(self, basedir):
+        basedir = Path.to_string(basedir)
+        Path.check_basedir_valid(basedir)
+        return Path(os.path.relpath(self.path, basedir), basedir)
 
-        if not os.path.isdir(reference):
-            reference = os.path.dirname(reference)
-
-        if not os.path.isabs(reference):
-            raise Exception("reference should be absolute")
-
-        return Path(os.path.relpath(self.to_absolute().abs_path, reference), reference)
-
-    def to_absolute(self):
-        if self.isabs():
-            return copy.deepcopy(self)
-        return Path(os.path.join(self.reference, self.rel_path))
+    def rel_path(self):
+        if self._type == Path.Type.Absolute:
+            raise ValueError("Calling rel_path() on an absolute path")
+        return os.path.relpath(self.path, self.basedir)
 
     def with_extension(self, extension):
         ret = copy.deepcopy(self)
-        src = ret.abs_path if ret.isabs() else ret.rel_path
-        p = pathlib.Path(src)
-        res = str(p.with_suffix(extension))
-        if ret.isabs():
-            ret.abs_path = res
-        else:
-            ret.rel_path = res
+        ret.path = str(pathlib.Path(self.path).with_suffix(extension))
         return ret
 
+    def isuser(self):
+        return self._type == Path.Type.User
+
     def isabs(self):
-        return self.abs_path is not None
+        return self._type == Path.Type.Absolute
 
     def isrel(self):
-        return self.rel_path is not None
-
-    def isuser(self):
-        return self._isuser
-
-    def setisuser(self, isuser):
-        self._isuser = isuser
+        return self._type == Path.Type.Relative
 
     def exists(self):
-        return os.path.exists(str(self))
+        return os.path.exists(self.path)
 
     def isfile(self):
-        return os.path.isfile(str(self))
+        return os.path.isfile(self.path)
 
     def isdir(self):
-        return os.path.isdir(str(self))
+        return os.path.isdir(self.path)
 
     def isemptyfile(self):
-        return self.isfile() and os.path.getsize(str(self)) == 0
+        return self.isfile() and os.path.getsize(self.path) == 0
 
     def basename(self):
-        return os.path.basename(str(self))
+        return os.path.basename(self.path)
 
     def parent_dir(self):
-        if self.isrel():
-            parent_dir = Path(os.path.dirname(self.rel_path), self.reference)
-        else:
-            parent_dir = Path(os.path.dirname(str(self)))
-        parent_dir.setisuser(self.isuser())
-
-        return parent_dir
+        ret = copy.deepcopy(self)
+        ret.path = os.path.dirname(self.path)
+        return ret
 
     def generated_by_us(self):
         for line in self.read_lines():
@@ -171,44 +165,44 @@ class Path:
         if not self.exists():
             return
         if not self.isfile():
-            Error.exit_on_error(str(self) + " cannot be safely removed (not a file), please remove it manually")
+            Error.exit_on_error(self.path + " cannot be safely removed (not a file), please remove it manually")
 
         if not self.generated_by_us() and not self.isemptyfile():
-            Error.exit_on_error(str(self) + " cannot be safely removed (not empty, not generated by us), please remove it manually")
+            Error.exit_on_error(self.path + " cannot be safely removed (not empty, not generated by us), please remove it manually")
 
-        os.remove(str(self))
+        os.remove(self.path)
 
     def read_lines(self):
-        with open(str(self), "r", encoding="utf8") as file:
+        with open(self.path, "r", encoding="utf8") as file:
             lines = file.readlines()
         return lines
 
     def write_lines(self, lines):
-        with open(str(self), "a", encoding="utf8") as file:
+        with open(self.path, "a", encoding="utf8") as file:
             file.writelines(lines)
 
     @staticmethod
-    def list_from_key(key, reference_path):
+    def list_from_key(key, config_dir):
         ret = []
         for path in key:
-            ret.append(Path(path, str(reference_path)))
+            ret.append(Path(path, config_dir))
         return ret
 
     @staticmethod
-    def verify_files_exist(paths):
+    def check_files_exist(paths):
         for path in paths:
             if not path.exists():
-                raise Exception(str(path) + " doesn't exist")
+                raise FileNotFoundError(path.path + " doesn't exist")
             if not path.isfile():
-                raise Exception(str(path) + " is not a file")
+                raise FileExistsError(path.path + " is not a file")
 
     @staticmethod
-    def verify_dirs_exist(paths):
+    def check_dirs_exist(paths):
         for path in paths:
             if not path.exists():
-                raise Exception(str(path) + " doesn't exist")
+                raise FileNotFoundError(path.path + " doesn't exist")
             if not path.isdir():
-                raise Exception(str(path) + " is not a directory")
+                raise FileExistsError(path.path + " is not a directory")
 
 
 class Config:
@@ -233,7 +227,7 @@ class Config:
 
         for path in self.paths:
             try:
-                with open(str(path), "r", encoding="utf8") as file:
+                with open(path.path, "r", encoding="utf8") as file:
                     data = yaml.safe_load(file)
             except OSError as exception:
                 Error.exit_on_exception("Failed opening configuration file", exception)
@@ -250,11 +244,11 @@ class Config:
                 elif key == "baudrate":
                     self.baudrate = data[key]
                 elif key == "libs":
-                    self.lib_paths += Path.list_from_key(data[key], path)
+                    self.lib_paths += Path.list_from_key(data[key], path.parent_dir())
                 elif key == "qmake_dirs":
-                    self.qmake_dirs += Path.list_from_key(data[key], path)
+                    self.qmake_dirs += Path.list_from_key(data[key], path.parent_dir())
                 elif key == "qmake_exclude_dirs":
-                    self.qmake_exclude_dirs += Path.list_from_key(data[key], path)
+                    self.qmake_exclude_dirs += Path.list_from_key(data[key], path.parent_dir())
                 elif key == "configs":
                     # Already handled
                     pass
@@ -282,19 +276,19 @@ class Config:
 
         ret.append(Config.title_string("main configuration paths"))
         for path in self.main_paths:
-            ret.append(Config.item_string(str(path)))
+            ret.append(Config.item_string(path.path))
 
         ret.append(Config.title_string("sub configurations"))
         for path in self.paths:
             if path not in self.main_paths:
-                ret.append(Config.item_string(str(path)))
+                ret.append(Config.item_string(path.path))
 
         ret.append(Config.title_string("fqbn"))
         ret.append(Config.item_string(self.fqbn))
 
         ret.append(Config.title_string("libs"))
         for lib_path in self.lib_paths:
-            ret.append(Config.item_string(str(lib_path)))
+            ret.append(Config.item_string(lib_path.path))
 
         ret.append(Config.title_string("cflags"))
         for cflag in self.cflags:
@@ -305,19 +299,19 @@ class Config:
     @staticmethod
     def get_extra_configs(path):
         if path in Config.extra_config_stack:
-            print("Circular configuration inclusion detected while parsing " + str(path))
+            print("Circular configuration inclusion detected while parsing " + path.path)
             print("Inclusion stack: ")
             for stack_item in Config.extra_config_stack:
-                print(" - " + str(stack_item))
+                print(" - " + stack_item.path)
             Error.exit_on_error("Aborting due to circular configuration inclusion")
 
-        Config.extra_config_stack.append(str(path))
+        Config.extra_config_stack.append(path)
         ret = []
-        with open(str(path), "r", encoding="utf8") as file:
+        with open(path.path, "r", encoding="utf8") as file:
             data = yaml.safe_load(file)
 
         for config in data.get("configs", []):
-            config_path = Path(config, str(path))
+            config_path = Path(config, path.parent_dir())
             ret.append(config_path)
             ret += Config.get_extra_configs(config_path)
 
@@ -329,13 +323,13 @@ class Makefile:
     def __init__(self, config, path, template_path, sketch_path):
         self.path = path
         self.config = config
-        self.sketch_path = sketch_path.to_relative(path)
+        self.sketch_path = sketch_path.to_relative(path.parent_dir())
         self.template_path = template_path
 
     def generate(self):
         self.path.safely_remove_or_exit()
 
-        print("Generating " + str(self.path) + "...")
+        print("Generating " + self.path.path + "...")
         in_lines = self.template_path.read_lines()
         out_lines = Constants.header_strings()
         for line in in_lines:
@@ -347,12 +341,12 @@ class Makefile:
         # pylint: disable=too-many-return-statements,too-many-branches
         if "LIBS_PLACEHOLDER" in line:
             ret = []
-            Path.verify_dirs_exist(self.config.lib_paths)
+            Path.check_dirs_exist(self.config.lib_paths)
             for lib_path in self.config.lib_paths:
                 if lib_path.isuser():
-                    lib_path_string = os.path.join("$(HOME)", lib_path.rel_path)
+                    lib_path_string = os.path.join("$(HOME)", lib_path.rel_path())
                 elif lib_path.isrel():
-                    lib_path_string = os.path.join("$(MAKEFILE_DIR)", lib_path.to_relative(self.path).rel_path)
+                    lib_path_string = os.path.join("$(MAKEFILE_DIR)", lib_path.to_relative(self.path.parent_dir()).rel_path())
                 else:
                     lib_path_string = str(lib_path)
                 ret.append("\t\t--library \"" + lib_path_string + "\" \\\n")
@@ -366,11 +360,12 @@ class Makefile:
                 bindir += bindir_suffix
             return [line.replace("BINDIR_PLACEHOLDER", bindir)]
         if "BINFILE_PLACEHOLDER" in line:
-            return [line.replace("BINFILE_PLACEHOLDER", os.path.basename(str(sketch_path) + ".bin"))]
+            return [line.replace("BINFILE_PLACEHOLDER", os.path.basename(sketch_path.with_extension(".ino.bin").path))]
         if "CFLAGS_PLACEHOLDER" in line:
             return [line.replace("CFLAGS_PLACEHOLDER", ' '.join(self.config.cflags))]
         if "SKETCH_NOEXT_PLACEHOLDER" in line:
-            return [line.replace("SKETCH_NOEXT_PLACEHOLDER", sketch_path.to_relative(self.path).with_extension("").rel_path)]
+            return [line.replace("SKETCH_NOEXT_PLACEHOLDER", sketch_path.to_relative(self.path.parent_dir()).
+                                 with_extension("").rel_path())]
         if "DEBUG_COMMAND_PLACEHOLDER" in line:
             return [line.replace("DEBUG_COMMAND_PLACEHOLDER", self.config.debug_command)]
         if "BAUDRATE_PLACEHOLDER" in line:
@@ -388,7 +383,7 @@ class Qmake:
         self.config = config
         self.template_path = template_path
         self.prifile_template_path = template_path.with_extension(".pri")
-        self.sketch_path = sketch_path.to_relative(self.path)
+        self.sketch_path = sketch_path.to_relative(self.path.parent_dir())
         self.makefile_path = makefile_path
         self.included_dirs = [self.sketch_path.parent_dir()] + config.lib_paths + config.qmake_dirs
         self.excluded_dirs = config.qmake_exclude_dirs
@@ -427,7 +422,7 @@ class Qmake:
 
         defines = Qmake.get_defines(self.makefile_path)
 
-        print("Generating " + str(self.path) + "...")
+        print("Generating " + self.path.path + "...")
         in_lines = self.template_path.read_lines()
         out_lines = Constants.header_strings()
         for line in in_lines:
@@ -436,7 +431,7 @@ class Qmake:
         self.path.write_lines(out_lines)
         print("Done")
 
-        print("Generating " + str(self.prifile_path) + "...")
+        print("Generating " + self.prifile_path.path + "...")
         in_lines = self.prifile_template_path.read_lines()
         out_lines = Constants.header_strings()
         for line in in_lines:
@@ -451,19 +446,20 @@ class Qmake:
     def create_runscript(self):
         self.script_path.safely_remove_or_exit()
 
-        makefile_rel_path = self.makefile_path.to_relative(str(self.script_path))
-        out_lines = ["#!/bin/sh\n"] + Constants.header_strings() + ["make -f " + makefile_rel_path.rel_path + " run\n"]
+        makefile_rel_path = self.makefile_path.to_relative(self.script_path.parent_dir())
+        out_lines = ["#!/bin/sh\n"] + Constants.header_strings() + ["make -f " + makefile_rel_path.rel_path() + " run\n"]
         self.script_path.write_lines(out_lines)
-        os.chmod(str(self.script_path), 0o0755)
+        os.chmod(self.script_path.path, 0o0755)
 
     def replace_tokens(self, line, other_files, headers, sources, includepaths, defines, include_abs, include_rel, include_user):
-        # pylint: disable=too-many-arguments
+        # pylint: disable=too-many-arguments,too-many-locals
+        qmake_dir = self.path.parent_dir()
         if "TARGET_PLACEHOLDER" in line:
-            return [line.replace("TARGET_PLACEHOLDER", str(self.script_path.with_extension("").to_relative(self.path).rel_path))]
+            return [line.replace("TARGET_PLACEHOLDER", self.script_path.with_extension("").to_relative(qmake_dir).rel_path())]
         if "MAKEFILE_PLACEHOLDER" in line:
-            return [line.replace("MAKEFILE_PLACEHOLDER", self.makefile_path.to_relative(self.path).rel_path)]
+            return [line.replace("MAKEFILE_PLACEHOLDER", self.makefile_path.to_relative(qmake_dir).rel_path())]
         if "PRIFILE_PLACEHOLDER" in line:
-            return [line.replace("PRIFILE_PLACEHOLDER", self.prifile_path.to_relative(self.path).rel_path)]
+            return [line.replace("PRIFILE_PLACEHOLDER", self.prifile_path.to_relative(qmake_dir).rel_path())]
         if "DEFINES_PLACEHOLDER" in line:
             ret = []
             for define in defines:
@@ -515,7 +511,7 @@ class Qmake:
         ret = []
         raw_paths = []
         for included_dir in self.included_dirs:
-            for raw_path in glob.iglob(os.path.join(str(included_dir), "**"), recursive=True):
+            for raw_path in glob.iglob(os.path.join(included_dir.path, "**"), recursive=True):
                 raw_real_path = os.path.realpath(raw_path)
                 if Qmake.is_rawpath_excluded(raw_real_path, self.excluded_dirs):
                     continue
@@ -532,22 +528,21 @@ class Qmake:
     @staticmethod
     def path_from_ancestor(ancestor, qmake_path, raw_path):
         if ancestor.isuser():
-            new_path = Path(raw_path).to_relative(ancestor.reference)
-            new_path.setisuser(True)
+            new_path = Path(os.path.join("~/", os.path.relpath(raw_path, os.path.expanduser("~/"))))
         elif ancestor.isabs():
             new_path = Path(raw_path)
         else:
-            new_path = Path(raw_path).to_relative(qmake_path)
+            new_path = Path(raw_path).to_relative(qmake_path.parent_dir())
         return new_path
 
     @staticmethod
     def to_qmake_file_directive(file_path, qmake_path):
         if file_path.isuser():
-            path_string = "$$HOME/" + file_path.rel_path
+            path_string = "$$HOME/" + file_path.rel_path()
         elif file_path.isabs():
-            path_string = str(file_path)
+            path_string = file_path.path
         else:
-            path_string = file_path.to_relative(qmake_path).rel_path
+            path_string = file_path.to_relative(qmake_path.parent_dir()).rel_path()
         return "\t" + path_string + " \\\n"
 
     @staticmethod
@@ -559,7 +554,7 @@ class Qmake:
 
     @staticmethod
     def make_rule(makefile_path, rule):
-        build_cmd = ["make", "-C", os.path.dirname(str(makefile_path)), "-f", str(makefile_path), rule]
+        build_cmd = ["make", "-C", os.path.dirname(makefile_path.path), "-f", makefile_path.path, rule]
         return subprocess.check_output(build_cmd, stderr=subprocess.PIPE).decode("utf8")
 
     @staticmethod
@@ -658,7 +653,7 @@ Please refer to the file README.md for more information.
         qmake_template_path = Path(args.qmake_template, os.getcwd()) if args.qmake_template else Paths.qmake_default_template_path()
         required_files.append(qmake_template_path)
 
-    Path.verify_files_exist(required_files)
+    Path.check_files_exist(required_files)
 
     config = Config(config_paths)
 
