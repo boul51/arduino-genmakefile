@@ -13,6 +13,7 @@ build:
 		--fqbn $(FQBN) \
 		--warnings all \
 		--build-property 'compiler.cpp.extra_flags=CFLAGS_PLACEHOLDER' \
+		--build-property 'compiler.c.extra_flags=CFLAGS_PLACEHOLDER' \
 		LIBS_PLACEHOLDER \
 		--output-dir $(BINDIR)
 
